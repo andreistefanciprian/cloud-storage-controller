@@ -19,5 +19,14 @@ gcloud iam service-accounts add-iam-policy-binding \
     cloud-storage-controller@${GCP_PROJECT}.iam.gserviceaccount.com \
     --project=$GCP_PROJECT \
     --role="roles/iam.workloadIdentityUser" \
-    --member="serviceAccount:${GCP_PROJECT}.svc.id.goog[default/cloud-storage-controller-controller-manager]"
+    --member="serviceAccount:${GCP_PROJECT}.svc.id.goog[system/controller-manager]"
+
+# for local test
+gcloud iam service-accounts keys create temp-sa-key.json \
+    --iam-account=cloud-storage-controller@${GCP_PROJECT}.iam.gserviceaccount.com \
+    --project=$GCP_PROJECT
+
+export GOOGLE_APPLICATION_CREDENTIALS=$(pwd)/temp-sa-key.json
+make build
+make run
 ```
