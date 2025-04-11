@@ -3,6 +3,7 @@ module github.com/andreistefanciprian/cloud-storage-controller
 go 1.21
 
 require (
+	cloud.google.com/go/storage v1.36.0
 	github.com/onsi/ginkgo/v2 v2.14.0
 	github.com/onsi/gomega v1.30.0
 	k8s.io/apimachinery v0.29.0
@@ -15,7 +16,6 @@ require (
 	cloud.google.com/go/compute v1.23.1 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
 	cloud.google.com/go/iam v1.1.3 // indirect
-	cloud.google.com/go/storage v1.36.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect

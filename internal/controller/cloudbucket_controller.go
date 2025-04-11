@@ -18,10 +18,15 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"time"
 
+	"cloud.google.com/go/storage"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	mygroupv1 "github.com/andreistefanciprian/cloud-storage-controller/api/v1"
@@ -30,7 +35,8 @@ import (
 // CloudBucketReconciler reconciles a CloudBucket object
 type CloudBucketReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme    *runtime.Scheme
+	GCSClient *storage.Client
 }
 
 //+kubebuilder:rbac:groups=mygroup.example.com,resources=cloudbuckets,verbs=get;list;watch;create;update;patch;delete
@@ -39,18 +45,122 @@ type CloudBucketReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the CloudBucket object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.17.0/pkg/reconcile
 func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	log := log.FromContext(ctx)
 
-	// TODO(user): your logic here
+	// Fetch the CloudBucket resource
+	cloudBucket := &mygroupv1.CloudBucket{}
+	err := r.Get(ctx, req.NamespacedName, cloudBucket)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("CloudBucket resource not found, ignoring")
+			return ctrl.Result{}, nil
+		}
+		log.Error(err, "Failed to get CloudBucket")
+		return ctrl.Result{}, err
+	}
 
+	// Initialize status if empty
+	if cloudBucket.Status.BucketExists == false && cloudBucket.Status.LastOperation == "" {
+		cloudBucket.Status = mygroupv1.CloudBucketStatus{
+			BucketExists:  false,
+			LastOperation: "Pending",
+		}
+	}
+
+	// Define finalizer
+	const bucketFinalizer = "cloudbuckets.mygroup.example.com/finalizer"
+
+	// Check if the CloudBucket is being deleted
+	if cloudBucket.GetDeletionTimestamp() != nil {
+		if controllerutil.ContainsFinalizer(cloudBucket, bucketFinalizer) {
+			if cloudBucket.Spec.DeletePolicy == "Delete" {
+				log.Info("Deleting bucket due to CloudBucket deletion", "bucketName", cloudBucket.Spec.BucketName)
+				err = r.deleteBucket(ctx, cloudBucket.Spec.BucketName)
+				if err != nil {
+					log.Error(err, "Failed to delete bucket")
+					cloudBucket.Status.LastOperation = "Failed"
+					cloudBucket.Status.ErrorMessage = err.Error()
+					if updateErr := r.Status().Update(ctx, cloudBucket); updateErr != nil {
+						log.Error(updateErr, "Failed to update CloudBucket status")
+					}
+					return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+				}
+				cloudBucket.Status.BucketExists = false
+				cloudBucket.Status.LastOperation = "Deleted"
+				cloudBucket.Status.ErrorMessage = ""
+			} else {
+				log.Info("Orphaning bucket due to deletePolicy", "bucketName", cloudBucket.Spec.BucketName)
+				cloudBucket.Status.LastOperation = "Orphaned"
+				cloudBucket.Status.ErrorMessage = ""
+			}
+
+			// Remove finalizer
+			controllerutil.RemoveFinalizer(cloudBucket, bucketFinalizer)
+			if err := r.Update(ctx, cloudBucket); err != nil {
+				log.Error(err, "Failed to remove finalizer")
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Add finalizer if not present
+	if !controllerutil.ContainsFinalizer(cloudBucket, bucketFinalizer) {
+		controllerutil.AddFinalizer(cloudBucket, bucketFinalizer)
+		if err := r.Update(ctx, cloudBucket); err != nil {
+			log.Error(err, "Failed to add finalizer")
+			return ctrl.Result{}, err
+		}
+	}
+
+	// Check if bucket exists
+	exists, err := r.bucketExists(ctx, cloudBucket.Spec.BucketName)
+	if err != nil {
+		log.Error(err, "Failed to check bucket existence")
+		cloudBucket.Status.LastOperation = "Failed"
+		cloudBucket.Status.ErrorMessage = err.Error()
+		if updateErr := r.Status().Update(ctx, cloudBucket); updateErr != nil {
+			log.Error(updateErr, "Failed to update CloudBucket status")
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+	}
+
+	// If bucket doesn't exist, create it
+	if !exists {
+		log.Info("Creating bucket", "bucketName", cloudBucket.Spec.BucketName)
+		err = r.createBucket(ctx, cloudBucket.Spec.ProjectID, cloudBucket.Spec.BucketName)
+		if err != nil {
+			log.Error(err, "Failed to create bucket")
+			cloudBucket.Status.BucketExists = false
+			cloudBucket.Status.LastOperation = "Failed"
+			cloudBucket.Status.ErrorMessage = err.Error()
+			if updateErr := r.Status().Update(ctx, cloudBucket); updateErr != nil {
+				log.Error(updateErr, "Failed to update CloudBucket status")
+			}
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+		}
+		cloudBucket.Status.BucketExists = true
+		// Check previous state to distinguish recreation
+		if cloudBucket.Status.LastOperation == "Exists" || cloudBucket.Status.LastOperation == "Created" {
+			cloudBucket.Status.LastOperation = "Recreated"
+		} else {
+			cloudBucket.Status.LastOperation = "Created"
+		}
+		cloudBucket.Status.ErrorMessage = ""
+	} else {
+		cloudBucket.Status.BucketExists = true
+		cloudBucket.Status.LastOperation = "Exists"
+		cloudBucket.Status.ErrorMessage = ""
+	}
+
+	// Update status
+	if err := r.Status().Update(ctx, cloudBucket); err != nil {
+		log.Error(err, "Failed to update CloudBucket status")
+		return ctrl.Result{}, err
+	}
+
+	log.Info("Reconciliation completed", "bucketName", cloudBucket.Spec.BucketName, "status", cloudBucket.Status)
 	return ctrl.Result{}, nil
 }
 
@@ -59,4 +169,44 @@ func (r *CloudBucketReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&mygroupv1.CloudBucket{}).
 		Complete(r)
+}
+
+// createBucket creates a new bucket in GCS
+func (r *CloudBucketReconciler) createBucket(ctx context.Context, projectID, bucketName string) error {
+	if bucketName == "" {
+		return fmt.Errorf("bucket name cannot be empty")
+	}
+	bucket := r.GCSClient.Bucket(bucketName)
+	if err := bucket.Create(ctx, projectID, nil); err != nil {
+		return fmt.Errorf("Bucket(%q).Create: %v", bucketName, err)
+	}
+	return nil
+}
+
+// deleteBucket deletes a bucket in GCS
+func (r *CloudBucketReconciler) deleteBucket(ctx context.Context, bucketName string) error {
+	if bucketName == "" {
+		return fmt.Errorf("bucket name cannot be empty")
+	}
+	bucket := r.GCSClient.Bucket(bucketName)
+	if err := bucket.Delete(ctx); err != nil {
+		return fmt.Errorf("Bucket(%q).Delete: %v", bucketName, err)
+	}
+	return nil
+}
+
+// bucketExists checks if a bucket exists in GCS
+func (r *CloudBucketReconciler) bucketExists(ctx context.Context, bucketName string) (bool, error) {
+	if bucketName == "" {
+		return false, fmt.Errorf("bucket name cannot be empty")
+	}
+	bucket := r.GCSClient.Bucket(bucketName)
+	_, err := bucket.Attrs(ctx)
+	if err != nil {
+		if err == storage.ErrBucketNotExist {
+			return false, nil
+		}
+		return false, fmt.Errorf("Bucket(%q).Attrs: %v", bucketName, err)
+	}
+	return true, nil
 }
