@@ -42,6 +42,8 @@ gcloud iam service-accounts keys create temp-sa-key.json \
 export GOOGLE_APPLICATION_CREDENTIALS=$(pwd)/temp-sa-key.json
 
 # test from local laptop
+make manifests                                               
+kubectl apply -f config/crd/bases/mygroup.example.com_cloudbuckets.yaml
 make build
 make run
 k apply -f config/samples/mygroup_v1_cloudbucket.yaml
@@ -52,6 +54,11 @@ make deploy
 k logs -l control-plane=controller-manager -f -n cloud-storage-controller-system
 k apply -f config/samples/mygroup_v1_cloudbucket.yaml
 k delete -f config/samples/mygroup_v1_cloudbucket.yaml
+
+# Check prometheus metrics
+controller=`k get pods -n cloud-storage-controller-system --no-headers -l control-plane=controller-manager | awk '{print $1}'`
+k port-forward pod/$controller 8080:8080
+http://localhost:8080/metrics
 ```
 
 ## Other commands
