@@ -6,6 +6,17 @@
 A Kubernetes controller to manage Google Cloud Storage (GCS) buckets with a `CloudBucket` custom resource.
 Runs on GKE with Workload Identity for GCS access.
 
+```
+apiVersion: mygroup.example.com/v1
+kind: CloudBucket
+metadata:
+  name: my-bucket-1
+spec:
+  projectID: rich-mountain-428806-r0
+  bucketName: my-unique-bucket-784509348-002
+  deletePolicy: Delete
+```
+
 ## What It Does
 - Creates GCS buckets based on `CloudBucket` specs.
 - Recreates buckets if deleted outside Kubernetes.
