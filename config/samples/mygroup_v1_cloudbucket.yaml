@@ -7,25 +7,29 @@ metadata:
     app.kubernetes.io/part-of: cloud-storage-controller
     app.kubernetes.io/managed-by: kustomize
     app.kubernetes.io/created-by: cloud-storage-controller
-  name: my-bucket
+  annotations:
+    test: testw
+  name: my-bucket-1
   namespace: default
 spec:
   projectID: rich-mountain-428806-r0
   bucketName: my-unique-bucket-784509348-002
   deletePolicy: Delete
-# ---
-# apiVersion: mygroup.example.com/v1
-# kind: CloudBucket
-# metadata:
-#   labels:
-#     app.kubernetes.io/name: cloudbucket
-#     app.kubernetes.io/instance: cloudbucket-sample
-#     app.kubernetes.io/part-of: cloud-storage-controller
-#     app.kubernetes.io/managed-by: kustomize
-#     app.kubernetes.io/created-by: cloud-storage-controller
-#   name: my-bucket
-#   namespace: default
-# spec:
-#   projectID: rich-mountain-428806-r0
-#   bucketName: my-unique-bucket-6735765856-001
-#   deletePolicy: Orphan
+---
+apiVersion: mygroup.example.com/v1
+kind: CloudBucket
+metadata:
+  labels:
+    app.kubernetes.io/name: cloudbucket
+    app.kubernetes.io/instance: cloudbucket-sample
+    app.kubernetes.io/part-of: cloud-storage-controller
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: cloud-storage-controller
+  annotations:
+    test: testw
+  name: my-bucket-2
+  namespace: default
+spec:
+  projectID: rich-mountain-428806-r0
+  bucketName: my-unique-bucket-6735765856-001
+  deletePolicy: Orphan

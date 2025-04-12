@@ -22,8 +22,10 @@ import (
 	"time"
 
 	"cloud.google.com/go/storage"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -35,13 +37,15 @@ import (
 // CloudBucketReconciler reconciles a CloudBucket object
 type CloudBucketReconciler struct {
 	client.Client
-	Scheme    *runtime.Scheme
-	GCSClient *storage.Client
+	Scheme        *runtime.Scheme
+	GCSClient     *storage.Client
+	EventRecorder record.EventRecorder
 }
 
 //+kubebuilder:rbac:groups=mygroup.example.com,resources=cloudbuckets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=mygroup.example.com,resources=cloudbuckets/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=mygroup.example.com,resources=cloudbuckets/finalizers,verbs=update
+//+kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -81,6 +85,7 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 					log.Error(err, "Failed to delete bucket")
 					cloudBucket.Status.LastOperation = "Failed"
 					cloudBucket.Status.ErrorMessage = err.Error()
+					r.EventRecorder.Event(cloudBucket, corev1.EventTypeWarning, "BucketFailed", fmt.Sprintf("Failed to delete bucket: %v", err))
 					if updateErr := r.Status().Update(ctx, cloudBucket); updateErr != nil {
 						log.Error(updateErr, "Failed to update CloudBucket status")
 					}
@@ -89,16 +94,19 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				cloudBucket.Status.BucketExists = false
 				cloudBucket.Status.LastOperation = "Deleted"
 				cloudBucket.Status.ErrorMessage = ""
+				r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketDeleted", "Bucket deleted successfully")
 			} else {
 				log.Info("Orphaning bucket due to deletePolicy", "bucketName", cloudBucket.Spec.BucketName)
 				cloudBucket.Status.LastOperation = "Orphaned"
 				cloudBucket.Status.ErrorMessage = ""
+				r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketOrphaned", "Bucket orphaned due to delete policy")
 			}
 
 			// Remove finalizer
 			controllerutil.RemoveFinalizer(cloudBucket, bucketFinalizer)
 			if err := r.Update(ctx, cloudBucket); err != nil {
 				log.Error(err, "Failed to remove finalizer")
+				r.EventRecorder.Event(cloudBucket, corev1.EventTypeWarning, "FinalizerFailed", fmt.Sprintf("Failed to remove finalizer: %v", err))
 				return ctrl.Result{}, err
 			}
 		}
@@ -110,16 +118,19 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		controllerutil.AddFinalizer(cloudBucket, bucketFinalizer)
 		if err := r.Update(ctx, cloudBucket); err != nil {
 			log.Error(err, "Failed to add finalizer")
+			r.EventRecorder.Event(cloudBucket, corev1.EventTypeWarning, "FinalizerFailed", fmt.Sprintf("Failed to add finalizer: %v", err))
 			return ctrl.Result{}, err
 		}
 	}
 
 	// Check if bucket exists
 	exists, err := r.bucketExists(ctx, cloudBucket.Spec.BucketName)
+
 	if err != nil {
 		log.Error(err, "Failed to check bucket existence")
 		cloudBucket.Status.LastOperation = "Failed"
 		cloudBucket.Status.ErrorMessage = err.Error()
+		r.EventRecorder.Event(cloudBucket, corev1.EventTypeWarning, "BucketFailed", fmt.Sprintf("Failed to check bucket existence: %v", err))
 		if updateErr := r.Status().Update(ctx, cloudBucket); updateErr != nil {
 			log.Error(updateErr, "Failed to update CloudBucket status")
 		}
@@ -135,20 +146,27 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			cloudBucket.Status.BucketExists = false
 			cloudBucket.Status.LastOperation = "Failed"
 			cloudBucket.Status.ErrorMessage = err.Error()
+			r.EventRecorder.Event(cloudBucket, corev1.EventTypeWarning, "BucketFailed", fmt.Sprintf("Failed to create bucket: %v", err))
 			if updateErr := r.Status().Update(ctx, cloudBucket); updateErr != nil {
 				log.Error(updateErr, "Failed to update CloudBucket status")
 			}
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 		}
 		cloudBucket.Status.BucketExists = true
-		// Check previous state to distinguish recreation
 		if cloudBucket.Status.LastOperation == "Exists" || cloudBucket.Status.LastOperation == "Created" {
 			cloudBucket.Status.LastOperation = "Recreated"
+			r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketRecreated", "Bucket recreated after being missing")
 		} else {
 			cloudBucket.Status.LastOperation = "Created"
+			r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketCreated", "Bucket created successfully")
 		}
 		cloudBucket.Status.ErrorMessage = ""
 	} else {
+		// add event Bucket already exists only if it was not created by this operator
+		if cloudBucket.Status.LastOperation == "" {
+			r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketExists", "Bucket already exists")
+			log.Info("Bucket already exists", "bucketName", cloudBucket.Spec.BucketName)
+		}
 		cloudBucket.Status.BucketExists = true
 		cloudBucket.Status.LastOperation = "Exists"
 		cloudBucket.Status.ErrorMessage = ""
@@ -157,6 +175,7 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Update status
 	if err := r.Status().Update(ctx, cloudBucket); err != nil {
 		log.Error(err, "Failed to update CloudBucket status")
+		r.EventRecorder.Event(cloudBucket, corev1.EventTypeWarning, "StatusUpdateFailed", fmt.Sprintf("Failed to update status: %v", err))
 		return ctrl.Result{}, err
 	}
 
@@ -166,6 +185,7 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *CloudBucketReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	r.EventRecorder = mgr.GetEventRecorderFor("cloud-storage-controller")
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&mygroupv1.CloudBucket{}).
 		Complete(r)
