@@ -61,6 +61,8 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			return ctrl.Result{}, nil
 		}
 		log.Error(err, "Failed to get CloudBucket")
+		ErrorsTotal.Inc()
+		r.EventRecorder.Event(cloudBucket, corev1.EventTypeWarning, "FetchFailed", fmt.Sprintf("Failed to get CloudBucket: %v", err))
 		return ctrl.Result{}, err
 	}
 
@@ -85,20 +87,24 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 					log.Error(err, "Failed to delete bucket")
 					cloudBucket.Status.LastOperation = "Failed"
 					cloudBucket.Status.ErrorMessage = err.Error()
+					ErrorsTotal.Inc()
 					r.EventRecorder.Event(cloudBucket, corev1.EventTypeWarning, "BucketFailed", fmt.Sprintf("Failed to delete bucket: %v", err))
 					if updateErr := r.Status().Update(ctx, cloudBucket); updateErr != nil {
 						log.Error(updateErr, "Failed to update CloudBucket status")
+						ErrorsTotal.Inc()
 					}
 					return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 				}
 				cloudBucket.Status.BucketExists = false
 				cloudBucket.Status.LastOperation = "Deleted"
 				cloudBucket.Status.ErrorMessage = ""
+				BucketsDeleted.Inc()
 				r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketDeleted", "Bucket deleted successfully")
 			} else {
 				log.Info("Orphaning bucket due to deletePolicy", "bucketName", cloudBucket.Spec.BucketName)
 				cloudBucket.Status.LastOperation = "Orphaned"
 				cloudBucket.Status.ErrorMessage = ""
+				BucketsOrphaned.Inc()
 				r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketOrphaned", "Bucket orphaned due to delete policy")
 			}
 
@@ -106,6 +112,7 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			controllerutil.RemoveFinalizer(cloudBucket, bucketFinalizer)
 			if err := r.Update(ctx, cloudBucket); err != nil {
 				log.Error(err, "Failed to remove finalizer")
+				ErrorsTotal.Inc()
 				r.EventRecorder.Event(cloudBucket, corev1.EventTypeWarning, "FinalizerFailed", fmt.Sprintf("Failed to remove finalizer: %v", err))
 				return ctrl.Result{}, err
 			}
@@ -118,6 +125,7 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		controllerutil.AddFinalizer(cloudBucket, bucketFinalizer)
 		if err := r.Update(ctx, cloudBucket); err != nil {
 			log.Error(err, "Failed to add finalizer")
+			ErrorsTotal.Inc()
 			r.EventRecorder.Event(cloudBucket, corev1.EventTypeWarning, "FinalizerFailed", fmt.Sprintf("Failed to add finalizer: %v", err))
 			return ctrl.Result{}, err
 		}
@@ -125,14 +133,15 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// Check if bucket exists
 	exists, err := r.bucketExists(ctx, cloudBucket.Spec.BucketName)
-
 	if err != nil {
 		log.Error(err, "Failed to check bucket existence")
 		cloudBucket.Status.LastOperation = "Failed"
 		cloudBucket.Status.ErrorMessage = err.Error()
+		ErrorsTotal.Inc()
 		r.EventRecorder.Event(cloudBucket, corev1.EventTypeWarning, "BucketFailed", fmt.Sprintf("Failed to check bucket existence: %v", err))
 		if updateErr := r.Status().Update(ctx, cloudBucket); updateErr != nil {
 			log.Error(updateErr, "Failed to update CloudBucket status")
+			ErrorsTotal.Inc()
 		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
@@ -146,18 +155,22 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			cloudBucket.Status.BucketExists = false
 			cloudBucket.Status.LastOperation = "Failed"
 			cloudBucket.Status.ErrorMessage = err.Error()
+			ErrorsTotal.Inc()
 			r.EventRecorder.Event(cloudBucket, corev1.EventTypeWarning, "BucketFailed", fmt.Sprintf("Failed to create bucket: %v", err))
 			if updateErr := r.Status().Update(ctx, cloudBucket); updateErr != nil {
 				log.Error(updateErr, "Failed to update CloudBucket status")
+				ErrorsTotal.Inc()
 			}
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 		}
 		cloudBucket.Status.BucketExists = true
 		if cloudBucket.Status.LastOperation == "Exists" || cloudBucket.Status.LastOperation == "Created" {
 			cloudBucket.Status.LastOperation = "Recreated"
+			BucketsRecreated.Inc()
 			r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketRecreated", "Bucket recreated after being missing")
 		} else {
 			cloudBucket.Status.LastOperation = "Created"
+			BucketsCreated.Inc()
 			r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketCreated", "Bucket created successfully")
 		}
 		cloudBucket.Status.ErrorMessage = ""
@@ -175,6 +188,7 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Update status
 	if err := r.Status().Update(ctx, cloudBucket); err != nil {
 		log.Error(err, "Failed to update CloudBucket status")
+		ErrorsTotal.Inc()
 		r.EventRecorder.Event(cloudBucket, corev1.EventTypeWarning, "StatusUpdateFailed", fmt.Sprintf("Failed to update status: %v", err))
 		return ctrl.Result{}, err
 	}
