@@ -12,9 +12,12 @@ kind: CloudBucket
 metadata:
   name: my-bucket-1
 spec:
-  projectID: rich-mountain-428806-r0
+  projectID: gcp-project-id
   deletePolicy: Delete
   location: asia
+  labels:
+    env: production
+    team: devops
 ```
 
 ## What It Does
@@ -59,12 +62,14 @@ make build
 make run
 k apply -f config/samples/mygroup_v1_cloudbucket.yaml
 k delete -f config/samples/mygroup_v1_cloudbucket.yaml
+k get events -w -n default | grep cloudbucket
 
 # test in the cluster
 make deploy
 k logs -l control-plane=controller-manager -f -n cloud-storage-controller-system
 k apply -f config/samples/mygroup_v1_cloudbucket.yaml
 k delete -f config/samples/mygroup_v1_cloudbucket.yaml
+k get events -w -n default | grep cloudbucket
 
 # Check prometheus metrics
 controller=`k get pods -n cloud-storage-controller-system --no-headers -l control-plane=controller-manager | awk '{print $1}'`

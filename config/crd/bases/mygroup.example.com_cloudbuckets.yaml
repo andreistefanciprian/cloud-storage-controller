@@ -49,6 +49,12 @@ spec:
                 - Delete
                 - Orphan
                 type: string
+              labels:
+                additionalProperties:
+                  type: string
+                description: Labels are additional key-value pairs to apply to the
+                  GCS bucket.
+                type: object
               location:
                 description: Location is the GCS region or multi-region where the
                   bucket is stored (e.g., "us", "eu", "asia")

@@ -40,6 +40,10 @@ type CloudBucketSpec struct {
 	// Location is the GCS region or multi-region where the bucket is stored (e.g., "us", "eu", "asia")
 	//+kubebuilder:validation:Optional
 	Location string `json:"location,omitempty"`
+
+	// Labels are additional key-value pairs to apply to the GCS bucket.
+	//+kubebuilder:validation:Optional
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // CloudBucketStatus defines the observed state of CloudBucket
