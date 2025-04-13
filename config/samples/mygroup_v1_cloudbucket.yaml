@@ -9,12 +9,13 @@ metadata:
     app.kubernetes.io/created-by: cloud-storage-controller
   annotations:
     test: testw
-  name: my-bucket-1
+  name: my-bucket-11
   namespace: default
 spec:
   projectID: rich-mountain-428806-r0
-  bucketName: my-unique-bucket-784509348-002
+  bucketName: my-unique-bucket-784509348-0021
   deletePolicy: Delete
+  location: eu
 ---
 apiVersion: mygroup.example.com/v1
 kind: CloudBucket
@@ -27,9 +28,10 @@ metadata:
     app.kubernetes.io/created-by: cloud-storage-controller
   annotations:
     test: testw
-  name: my-bucket-2
+  name: my-bucket-21
   namespace: default
 spec:
   projectID: rich-mountain-428806-r0
-  bucketName: my-unique-bucket-6735765856-001
+  bucketName: my-unique-bucket-6735765856-0011
   deletePolicy: Orphan
+  location: asia

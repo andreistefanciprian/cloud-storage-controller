@@ -52,6 +52,10 @@ spec:
                 - Delete
                 - Orphan
                 type: string
+              location:
+                description: Location is the GCS region or multi-region where the
+                  bucket is stored (e.g., "us", "eu", "asia")
+                type: string
               projectID:
                 description: ProjectID is the GCP project ID where the bucket will
                   be created.

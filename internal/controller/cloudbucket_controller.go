@@ -148,8 +148,8 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// If bucket doesn't exist, create it
 	if !exists {
-		log.Info("Creating bucket", "bucketName", cloudBucket.Spec.BucketName)
-		err = r.createBucket(ctx, cloudBucket.Spec.ProjectID, cloudBucket.Spec.BucketName)
+		log.Info("Creating bucket", "bucketName", cloudBucket.Spec.BucketName, "location", cloudBucket.Spec.Location)
+		err = r.createBucket(ctx, cloudBucket.Spec.ProjectID, cloudBucket.Spec.BucketName, cloudBucket.Spec.Location)
 		if err != nil {
 			log.Error(err, "Failed to create bucket")
 			cloudBucket.Status.BucketExists = false
@@ -206,12 +206,16 @@ func (r *CloudBucketReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 // createBucket creates a new bucket in GCS
-func (r *CloudBucketReconciler) createBucket(ctx context.Context, projectID, bucketName string) error {
+func (r *CloudBucketReconciler) createBucket(ctx context.Context, projectID, bucketName, location string) error {
 	if bucketName == "" {
 		return fmt.Errorf("bucket name cannot be empty")
 	}
 	bucket := r.GCSClient.Bucket(bucketName)
-	if err := bucket.Create(ctx, projectID, nil); err != nil {
+	attrs := &storage.BucketAttrs{}
+	if location != "" {
+		attrs.Location = location
+	}
+	if err := bucket.Create(ctx, projectID, attrs); err != nil {
 		return fmt.Errorf("Bucket(%q).Create: %v", bucketName, err)
 	}
 	return nil
