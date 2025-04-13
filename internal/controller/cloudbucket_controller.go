@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"reflect"
 	"strings"
 	"time"
 
@@ -177,6 +178,7 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 		}
 		cloudBucket.Status.BucketExists = true
+		cloudBucket.Status.AppliedLabels = mergeLabels(cloudBucket.Spec.Labels)
 		if cloudBucket.Status.LastOperation == "Exists" || cloudBucket.Status.LastOperation == "Created" {
 			cloudBucket.Status.LastOperation = "Recreated"
 			BucketsRecreated.Inc()
@@ -188,13 +190,32 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 		cloudBucket.Status.ErrorMessage = ""
 	} else {
-		// add event Bucket already exists only if it was not created by this operator
-		if cloudBucket.Status.LastOperation == "" {
+		// Check if labels need updating
+		if !reflect.DeepEqual(cloudBucket.Status.AppliedLabels, mergeLabels(cloudBucket.Spec.Labels)) {
+			log.Info("Updating bucket labels", "bucketName", cloudBucket.Status.BucketName)
+			err = r.updateBucketLabels(ctx, cloudBucket.Status.BucketName, cloudBucket.Spec.Labels)
+			if err != nil {
+				log.Error(err, "Failed to update bucket labels")
+				cloudBucket.Status.LastOperation = "Failed"
+				cloudBucket.Status.ErrorMessage = err.Error()
+				ErrorsTotal.Inc()
+				r.EventRecorder.Event(cloudBucket, corev1.EventTypeWarning, "BucketFailed", fmt.Sprintf("Failed to update bucket labels: %v", err))
+				if updateErr := r.Status().Update(ctx, cloudBucket); updateErr != nil {
+					log.Error(updateErr, "Failed to update CloudBucket status")
+					ErrorsTotal.Inc()
+				}
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+			}
+			cloudBucket.Status.AppliedLabels = mergeLabels(cloudBucket.Spec.Labels)
+			cloudBucket.Status.LastOperation = "LabelsUpdated"
+			cloudBucket.Status.ErrorMessage = ""
+			r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "LabelsUpdated", fmt.Sprintf("Bucket %s labels updated successfully", cloudBucket.Status.BucketName))
+		} else if cloudBucket.Status.LastOperation == "" {
 			r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketExists", "Bucket already exists")
 			log.Info("Bucket already exists", "bucketName", cloudBucket.Status.BucketName)
 		}
 		cloudBucket.Status.BucketExists = true
-		cloudBucket.Status.LastOperation = "Exists"
+		// cloudBucket.Status.LastOperation = cloudBucket.Status.LastOperation // Preserve LabelsUpdated or set Exists
 		cloudBucket.Status.ErrorMessage = ""
 	}
 
@@ -232,6 +253,16 @@ func generateBucketName(name string) string {
 	return fmt.Sprintf("%s-%s", name, string(suffix))
 }
 
+// mergeLabels combines user labels with the managed-by label
+func mergeLabels(userLabels map[string]string) map[string]string {
+	labels := make(map[string]string)
+	for k, v := range userLabels {
+		labels[k] = v
+	}
+	labels["managed-by"] = "cloud-storage-controller"
+	return labels
+}
+
 // createBucket creates a new bucket in GCS
 func (r *CloudBucketReconciler) createBucket(ctx context.Context, projectID, bucketName, location string, labels map[string]string) error {
 	if bucketName == "" {
@@ -239,19 +270,33 @@ func (r *CloudBucketReconciler) createBucket(ctx context.Context, projectID, buc
 	}
 	bucket := r.GCSClient.Bucket(bucketName)
 	attrs := &storage.BucketAttrs{
-		Labels: map[string]string{
-			"managed-by": "cloud-storage-controller",
-		},
+		Labels: mergeLabels(labels),
 	}
 	if location != "" {
 		attrs.Location = location
 	}
-	// Merge user-specified labels
-	for k, v := range labels {
-		attrs.Labels[k] = v
-	}
 	if err := bucket.Create(ctx, projectID, attrs); err != nil {
 		return fmt.Errorf("Bucket(%q).Create: %v", bucketName, err)
+	}
+	return nil
+}
+
+// updateBucketLabels updates the labels of an existing GCS bucket
+func (r *CloudBucketReconciler) updateBucketLabels(ctx context.Context, bucketName string, labels map[string]string) error {
+	if bucketName == "" {
+		return fmt.Errorf("bucket name cannot be empty")
+	}
+	bucket := r.GCSClient.Bucket(bucketName)
+	attrs, err := bucket.Attrs(ctx)
+	if err != nil {
+		return fmt.Errorf("Bucket(%q).Attrs: %v", bucketName, err)
+	}
+	// Update labels
+	attrs.Labels = mergeLabels(labels)
+	// Use minimal BucketAttrsToUpdate to avoid unsupported fields
+	_, err = bucket.Update(ctx, storage.BucketAttrsToUpdate{})
+	if err != nil {
+		return fmt.Errorf("Bucket(%q).Update: %v", bucketName, err)
 	}
 	return nil
 }

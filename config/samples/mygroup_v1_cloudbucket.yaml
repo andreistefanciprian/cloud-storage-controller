@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/created-by: cloud-storage-controller
   annotations:
     test: testw
-  name: my-bucket-11
+  name: my-bucket-111
   namespace: default
 spec:
   projectID: rich-mountain-428806-r0
@@ -17,7 +17,7 @@ spec:
   location: eu
   labels:
     app: frontend
-    environment: production
+    environment: prod
 ---
 apiVersion: mygroup.example.com/v1
 kind: CloudBucket
@@ -30,7 +30,7 @@ metadata:
     app.kubernetes.io/created-by: cloud-storage-controller
   annotations:
     test: testw
-  name: my-bucket-21
+  name: my-bucket-211
   namespace: default
 spec:
   projectID: rich-mountain-428806-r0
@@ -38,4 +38,4 @@ spec:
   location: asia
   labels:
     app: backend
-    environment: test
+    environment: staging
