@@ -40,6 +40,10 @@ type CloudBucketSpec struct {
 	//+kubebuilder:validation:Enum=Delete;Orphan
 	//+kubebuilder:default=Orphan
 	DeletePolicy string `json:"deletePolicy,omitempty"`
+
+	// Location is the GCS region or multi-region where the bucket is stored (e.g., "us", "eu", "asia")
+	// +optional
+	Location string `json:"location,omitempty"`
 }
 
 // CloudBucketStatus defines the observed state of CloudBucket
