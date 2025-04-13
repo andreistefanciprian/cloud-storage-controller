@@ -39,9 +39,6 @@ spec:
           spec:
             description: CloudBucketSpec defines the desired state of CloudBucket
             properties:
-              bucketName:
-                description: BucketName is the name of the bucket to create or manage.
-                type: string
               deletePolicy:
                 default: Orphan
                 description: |-
@@ -61,7 +58,6 @@ spec:
                   be created.
                 type: string
             required:
-            - bucketName
             - projectID
             type: object
           status:
@@ -70,6 +66,10 @@ spec:
               bucketExists:
                 description: BucketExists indicates whether the bucket exists in GCP.
                 type: boolean
+              bucketName:
+                description: BucketName is the actual name of the bucket created in
+                  GCP.
+                type: string
               errorMessage:
                 description: ErrorMessage contains details of any error encountered
                   during reconciliation.

@@ -13,8 +13,8 @@ metadata:
   name: my-bucket-1
 spec:
   projectID: rich-mountain-428806-r0
-  bucketName: my-unique-bucket-784509348-002
   deletePolicy: Delete
+  location: asia
 ```
 
 ## What It Does

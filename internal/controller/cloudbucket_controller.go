@@ -19,6 +19,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"strings"
 	"time"
 
 	"cloud.google.com/go/storage"
@@ -80,9 +82,9 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// Check if the CloudBucket is being deleted
 	if cloudBucket.GetDeletionTimestamp() != nil {
 		if controllerutil.ContainsFinalizer(cloudBucket, bucketFinalizer) {
-			if cloudBucket.Spec.DeletePolicy == "Delete" {
-				log.Info("Deleting bucket due to CloudBucket deletion", "bucketName", cloudBucket.Spec.BucketName)
-				err = r.deleteBucket(ctx, cloudBucket.Spec.BucketName)
+			if cloudBucket.Spec.DeletePolicy == "Delete" && cloudBucket.Status.BucketName != "" {
+				log.Info("Deleting bucket due to CloudBucket deletion", "bucketName", cloudBucket.Status.BucketName)
+				err = r.deleteBucket(ctx, cloudBucket.Status.BucketName)
 				if err != nil {
 					log.Error(err, "Failed to delete bucket")
 					cloudBucket.Status.LastOperation = "Failed"
@@ -99,13 +101,13 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				cloudBucket.Status.LastOperation = "Deleted"
 				cloudBucket.Status.ErrorMessage = ""
 				BucketsDeleted.Inc()
-				r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketDeleted", "Bucket deleted successfully")
+				r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketDeleted", fmt.Sprintf("Bucket %s deleted successfully", cloudBucket.Status.BucketName))
 			} else {
-				log.Info("Orphaning bucket due to deletePolicy", "bucketName", cloudBucket.Spec.BucketName)
+				log.Info("Orphaning bucket due to deletePolicy", "bucketName", cloudBucket.Status.BucketName)
 				cloudBucket.Status.LastOperation = "Orphaned"
 				cloudBucket.Status.ErrorMessage = ""
 				BucketsOrphaned.Inc()
-				r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketOrphaned", "Bucket orphaned due to delete policy")
+				r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketOrphaned", fmt.Sprintf("Bucket %s orphaned due to delete policy", cloudBucket.Status.BucketName))
 			}
 
 			// Remove finalizer
@@ -131,8 +133,19 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 	}
 
+	// Generate bucket name if not set
+	if cloudBucket.Status.BucketName == "" {
+		cloudBucket.Status.BucketName = generateBucketName(cloudBucket.Name)
+		if err := r.Status().Update(ctx, cloudBucket); err != nil {
+			log.Error(err, "Failed to update CloudBucket status with bucket name")
+			ErrorsTotal.Inc()
+			r.EventRecorder.Event(cloudBucket, corev1.EventTypeWarning, "StatusUpdateFailed", fmt.Sprintf("Failed to update status: %v", err))
+			return ctrl.Result{}, err
+		}
+	}
+
 	// Check if bucket exists
-	exists, err := r.bucketExists(ctx, cloudBucket.Spec.BucketName)
+	exists, err := r.bucketExists(ctx, cloudBucket.Status.BucketName)
 	if err != nil {
 		log.Error(err, "Failed to check bucket existence")
 		cloudBucket.Status.LastOperation = "Failed"
@@ -148,8 +161,8 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 
 	// If bucket doesn't exist, create it
 	if !exists {
-		log.Info("Creating bucket", "bucketName", cloudBucket.Spec.BucketName, "location", cloudBucket.Spec.Location)
-		err = r.createBucket(ctx, cloudBucket.Spec.ProjectID, cloudBucket.Spec.BucketName, cloudBucket.Spec.Location)
+		log.Info("Creating bucket", "bucketName", cloudBucket.Status.BucketName, "location", cloudBucket.Spec.Location)
+		err = r.createBucket(ctx, cloudBucket.Spec.ProjectID, cloudBucket.Status.BucketName, cloudBucket.Spec.Location)
 		if err != nil {
 			log.Error(err, "Failed to create bucket")
 			cloudBucket.Status.BucketExists = false
@@ -171,14 +184,14 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		} else {
 			cloudBucket.Status.LastOperation = "Created"
 			BucketsCreated.Inc()
-			r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketCreated", "Bucket created successfully")
+			r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketCreated", fmt.Sprintf("Bucket %s created successfully", cloudBucket.Status.BucketName))
 		}
 		cloudBucket.Status.ErrorMessage = ""
 	} else {
 		// add event Bucket already exists only if it was not created by this operator
 		if cloudBucket.Status.LastOperation == "" {
 			r.EventRecorder.Event(cloudBucket, corev1.EventTypeNormal, "BucketExists", "Bucket already exists")
-			log.Info("Bucket already exists", "bucketName", cloudBucket.Spec.BucketName)
+			log.Info("Bucket already exists", "bucketName", cloudBucket.Status.BucketName)
 		}
 		cloudBucket.Status.BucketExists = true
 		cloudBucket.Status.LastOperation = "Exists"
@@ -193,7 +206,7 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
-	log.Info("Reconciliation completed", "bucketName", cloudBucket.Spec.BucketName, "status", cloudBucket.Status)
+	log.Info("Reconciliation completed", "bucketName", cloudBucket.Status.BucketName, "status", cloudBucket.Status)
 	return ctrl.Result{}, nil
 }
 
@@ -203,6 +216,20 @@ func (r *CloudBucketReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&mygroupv1.CloudBucket{}).
 		Complete(r)
+}
+
+// generateBucketName creates a unique bucket name based on the CloudBucket name
+func generateBucketName(name string) string {
+	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+	const suffixLength = 8
+	rand.Seed(time.Now().UnixNano())
+	suffix := make([]byte, suffixLength)
+	for i := range suffix {
+		suffix[i] = charset[rand.Intn(len(charset))]
+	}
+	// Ensure lowercase and no invalid characters for GCS
+	name = strings.ToLower(strings.ReplaceAll(name, "_", "-"))
+	return fmt.Sprintf("%s-%s", name, string(suffix))
 }
 
 // createBucket creates a new bucket in GCS
