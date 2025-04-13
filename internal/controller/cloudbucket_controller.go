@@ -162,7 +162,7 @@ func (r *CloudBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// If bucket doesn't exist, create it
 	if !exists {
 		log.Info("Creating bucket", "bucketName", cloudBucket.Status.BucketName, "location", cloudBucket.Spec.Location)
-		err = r.createBucket(ctx, cloudBucket.Spec.ProjectID, cloudBucket.Status.BucketName, cloudBucket.Spec.Location)
+		err = r.createBucket(ctx, cloudBucket.Spec.ProjectID, cloudBucket.Status.BucketName, cloudBucket.Spec.Location, cloudBucket.Spec.Labels)
 		if err != nil {
 			log.Error(err, "Failed to create bucket")
 			cloudBucket.Status.BucketExists = false
@@ -233,14 +233,22 @@ func generateBucketName(name string) string {
 }
 
 // createBucket creates a new bucket in GCS
-func (r *CloudBucketReconciler) createBucket(ctx context.Context, projectID, bucketName, location string) error {
+func (r *CloudBucketReconciler) createBucket(ctx context.Context, projectID, bucketName, location string, labels map[string]string) error {
 	if bucketName == "" {
 		return fmt.Errorf("bucket name cannot be empty")
 	}
 	bucket := r.GCSClient.Bucket(bucketName)
-	attrs := &storage.BucketAttrs{}
+	attrs := &storage.BucketAttrs{
+		Labels: map[string]string{
+			"managed-by": "cloud-storage-controller",
+		},
+	}
 	if location != "" {
 		attrs.Location = location
+	}
+	// Merge user-specified labels
+	for k, v := range labels {
+		attrs.Labels[k] = v
 	}
 	if err := bucket.Create(ctx, projectID, attrs); err != nil {
 		return fmt.Errorf("Bucket(%q).Create: %v", bucketName, err)

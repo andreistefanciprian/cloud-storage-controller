@@ -15,6 +15,9 @@ spec:
   projectID: rich-mountain-428806-r0
   deletePolicy: Delete
   location: eu
+  labels:
+    app: frontend
+    environment: production
 ---
 apiVersion: mygroup.example.com/v1
 kind: CloudBucket
@@ -33,3 +36,6 @@ spec:
   projectID: rich-mountain-428806-r0
   deletePolicy: Orphan
   location: asia
+  labels:
+    app: backend
+    environment: test
