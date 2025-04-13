@@ -29,10 +29,6 @@ type CloudBucketSpec struct {
 	//+kubebuilder:validation:Required
 	ProjectID string `json:"projectID"`
 
-	// BucketName is the name of the bucket to create or manage.
-	//+kubebuilder:validation:Required
-	BucketName string `json:"bucketName"`
-
 	// DeletePolicy determines whether the bucket is deleted when the CloudBucket resource is deleted.
 	// Valid values are "Delete" (delete the bucket) or "Orphan" (leave the bucket).
 	// If not specified, defaults to "Orphan".
@@ -42,7 +38,7 @@ type CloudBucketSpec struct {
 	DeletePolicy string `json:"deletePolicy,omitempty"`
 
 	// Location is the GCS region or multi-region where the bucket is stored (e.g., "us", "eu", "asia")
-	// +optional
+	//+kubebuilder:validation:Optional
 	Location string `json:"location,omitempty"`
 }
 
@@ -50,6 +46,10 @@ type CloudBucketSpec struct {
 type CloudBucketStatus struct {
 	// BucketExists indicates whether the bucket exists in GCP.
 	BucketExists bool `json:"bucketExists"`
+
+	// BucketName is the actual name of the bucket created in GCP.
+	//+kubebuilder:validation:Optional
+	BucketName string `json:"bucketName,omitempty"`
 
 	// LastOperation describes the last action performed by the controller (e.g., "Created", "Deleted", "Failed").
 	//+kubebuilder:validation:Optional
