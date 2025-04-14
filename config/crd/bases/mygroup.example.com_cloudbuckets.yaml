@@ -69,6 +69,12 @@ spec:
           status:
             description: CloudBucketStatus defines the observed state of CloudBucket
             properties:
+              appliedLabels:
+                additionalProperties:
+                  type: string
+                description: AppliedLabels are the labels currently applied to the
+                  GCS bucket.
+                type: object
               bucketExists:
                 description: BucketExists indicates whether the bucket exists in GCP.
                 type: boolean

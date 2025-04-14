@@ -62,6 +62,10 @@ type CloudBucketStatus struct {
 	// ErrorMessage contains details of any error encountered during reconciliation.
 	//+kubebuilder:validation:Optional
 	ErrorMessage string `json:"errorMessage,omitempty"`
+
+	// AppliedLabels are the labels currently applied to the GCS bucket.
+	//+kubebuilder:validation:Optional
+	AppliedLabels map[string]string `json:"appliedLabels,omitempty"`
 }
 
 //+kubebuilder:object:root=true
